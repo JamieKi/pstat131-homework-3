@@ -1,0 +1,352 @@
+---
+title: "Homework 3"
+author: "PSTAT 131/231"
+output:
+  pdf_document:
+    toc: yes
+  html_document:
+    toc: yes
+    toc_float: yes
+    code_folding: show
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, message = FALSE,
+                      warning = FALSE)
+library(yardstick)
+library(tidymodels)
+library(ISLR) # For the Smarket data set
+library(ISLR2) # For the Bikeshare data set
+library(discrim)
+library(poissonreg)
+library(corrr)
+library(ggplot2)
+library(klaR) # for naive bayes
+tidymodels_prefer()
+```
+
+## Classification
+
+For this assignment, we will be working with part of a [Kaggle data set](https://www.kaggle.com/c/titanic/overview) that was the subject of a machine learning competition and is often used for practicing ML models. The goal is classification; specifically, to predict which passengers would survive the [Titanic shipwreck](https://en.wikipedia.org/wiki/Titanic).
+
+![Fig. 1: RMS Titanic departing Southampton on April 10, 1912.](images/RMS_Titanic.jpg){width="363"}
+
+Load the data from `data/titanic.csv` into *R* and familiarize yourself with the variables it contains using the codebook (`data/titanic_codebook.txt`).
+
+Notice that `survived` and `pclass` should be changed to factors. When changing `survived` to a factor, you may want to reorder the factor so that *"Yes"* is the first level.
+
+Make sure you load the `tidyverse` and `tidymodels`!
+
+*Remember that you'll need to set a seed at the beginning of the document to reproduce your results.*
+
+```{r}
+titanic <- read.csv(file = "~/Downloads/homework-3/data/titanic.csv")
+head(titanic)
+```
+
+
+### Question 1
+
+Split the data, stratifying on the outcome variable, `survived.`  You should choose the proportions to split the data into. Verify that the training and testing data sets have the appropriate number of observations. Take a look at the training data and note any potential issues, such as missing data.
+
+Why is it a good idea to use stratified sampling for this data?
+
+1. For our training and testing data sets, we have missing data for 'age,' 'cabin,' and 'embarked.' The potential issues could be reduced statistical power, the cause of bias in the estimation of parameters, and reduced representativeness of the samples.
+
+
+It is a good idea to use stratified sampling for this data because our sample can be divided into mutually exclusive and exhaustive subgroups that can have different mean values for the variable. Since our data satisfies this requirement, it is a good idea to use stratified sampling for this data. 
+
+```{r}
+titanic_split <- initial_split(titanic, prop = 0.70,
+                                strata = survived)
+titanic_train <- training(titanic_split)
+titanic_test <- testing(titanic_split)
+titanic_train
+titanic_test
+```
+
+
+### Question 2
+
+Using the **training** data set, explore/describe the distribution of the outcome variable `survived`.
+
+```{r}
+titanic_train %>%
+  ggplot(aes( x = survived )) + 
+  geom_bar()
+
+```
+The outcome variable "survived" has two categories, "Yes" and "No". Here, there are more "No" variables than the "Yes" variables. The total number of variables seems to be approximately over 600.
+
+### Question 3
+
+Using the **training** data set, create a correlation matrix of all continuous variables. Create a visualization of the matrix, and describe any patterns you see. Are any predictors correlated with each other? Which ones, and in which direction?
+
+Yes there are predictors correlated with each other. The age and parch predictors are negatively correlated to each other, and the parch and fare predictors are positively correlated to each other.
+
+```{r}
+cor_titanic <- titanic_train %>%
+  select(-survived, -pclass, -name, -sex, -sib_sp, -ticket, -cabin, -embarked) %>%
+  cor(use = "pairwise.complete.obs", method = "pearson")
+rplot(cor_titanic)
+```
+
+
+### Question 4
+
+Using the **training** data, create a recipe predicting the outcome variable `survived`. Include the following predictors: ticket class, sex, age, number of siblings or spouses aboard, number of parents or children aboard, and passenger fare.
+
+Recall that there were missing values for `age`. To deal with this, add an imputation step using `step_impute_linear()`. Next, use `step_dummy()` to **dummy** encode categorical predictors. Finally, include interactions between:
+
+-   Sex and passenger fare, and
+-   Age and passenger fare.
+
+You'll need to investigate the `tidymodels` documentation to find the appropriate step functions to use.
+
+```{r}
+library(modeldata)
+titanic_recipe <- recipe(survived ~ pclass+ sex + age + sib_sp + parch + fare, data = titanic_train) %>%
+  step_impute_linear(age) %>%
+  step_dummy(all_nominal_predictors()) %>%
+  prep() 
+
+int_mod_2 <- titanic_recipe %>%
+  step_dummy(sex, age) %>%
+  step_interact(terms = ~ fare)
+tidy(int_mod_2, number = 1)
+
+```
+
+
+
+### Question 5
+
+Specify a **logistic regression** model for classification using the `"glm"` engine. Then create a workflow. Add your model and the appropriate recipe. Finally, use `fit()` to apply your workflow to the **training** data.
+
+***Hint: Make sure to store the results of `fit()`. You'll need them later on.***
+
+
+```{r}
+log_reg <- logistic_reg() %>%
+  set_engine("glm") %>%
+  set_mode("classification")
+
+log_wkflow <- workflow() %>%
+  add_model(log_reg) %>%
+  add_recipe(titanic_recipe)
+
+log_fit <- fit(log_wkflow, titanic_train)
+
+log_fit %>%
+  tidy()
+
+```
+
+### Question 6
+
+**Repeat Question 5**, but this time specify a linear discriminant analysis model for classification using the `"MASS"` engine.
+
+```{r}
+lda_mod <-discrim_linear() %>%
+  set_mode("classification") %>%
+  set_engine("MASS")
+
+lda_wkflow <- workflow() %>% 
+  add_model(lda_mod) %>% 
+  add_recipe(titanic_recipe)
+
+lda_fit <- fit(lda_wkflow, titanic_train)
+
+```
+
+
+### Question 7
+
+**Repeat Question 5**, but this time specify a quadratic discriminant analysis model for classification using the `"MASS"` engine.
+
+```{r}
+qda_mod <- discrim_quad() %>%
+  set_mode("classification") %>%
+  set_engine("MASS")
+
+qda_wkflow <- workflow() %>% 
+  add_model(qda_mod) %>% 
+  add_recipe(titanic_recipe)
+
+qda_fit <- fit(qda_wkflow, titanic_train)
+
+```
+
+
+### Question 8
+
+**Repeat Question 5**, but this time specify a naive Bayes model for classification using the `"klaR"` engine. Set the `usekernel` argument to `FALSE`.
+
+```{r}
+nb_mod <- naive_Bayes() %>%
+  set_mode("classification") %>%
+  set_engine("klaR") %>%
+  set_args(usekernel = FALSE)
+
+nb_wkflow <- workflow() %>%
+  add_model(nb_mod) %>%
+  add_recipe(titanic_recipe)
+
+nb_fit <- fit(nb_wkflow, titanic_train)
+```
+
+
+### Question 9
+
+Now you've fit four different models to your training data.
+
+Use `predict()` and `bind_cols()` to generate predictions using each of these 4 models and your **training** data. Then use the *accuracy* metric to assess the performance of each of the four models.
+
+Which model achieved the highest accuracy on the training data?
+
+The logistic regression model achieved the highest accuracy on the training data since our accuracy estimate is 0.6837881 and the logistic regression model is closest to this, which is 0.6837881.
+
+```{r}
+pred_log = predict(log_fit, new_data = titanic_train, type = "class")
+pred_lda = predict(lda_fit, new_data = titanic_train, type = "class")
+pred_qda = predict(qda_fit, new_data = titanic_train, type = "class")
+pred_nb = predict(nb_fit, new_data = titanic_train, type = "class")
+
+
+bind <- bind_cols(log = pred_log$.pred_class, lda = pred_lda$.pred_class, qda = pred_qda$.pred_class, nb = pred_nb$.pred_class, survived = titanic_train$survived)
+
+bind
+
+log_reg_acc <- bind %>%
+  accuracy(truth = factor(survived), estimate = log)
+log_reg_acc
+
+lda_acc <- bind %>%
+  accuracy(truth = factor(survived), estimate = lda)
+
+nb_acc <- bind %>%
+  accuracy(truth = factor(survived), estimate = nb)
+
+qda_acc <- bind %>%
+  accuracy(truth = factor(survived), estimate = qda)
+
+accuracies <- c(log_reg_acc$.estimate, lda_acc$.estimate, 
+                nb_acc$.estimate, qda_acc$.estimate)
+
+log_reg_acc$.estimate
+
+models <- c("Logistic Regression", "LDA", "Naive Bayes", "QDA")
+results <- tibble(accuracies = accuracies, models = models)
+results %>% 
+  arrange(-accuracies)
+
+augment(log_fit, new_data = titanic_train) %>%
+  conf_mat(truth = survived, estimate = .pred_class)
+
+
+```
+
+
+### Question 10
+
+Fit the model with the highest training accuracy to the **testing** data. Report the accuracy of the model on the **testing** data.
+
+Again using the **testing** data, create a confusion matrix and visualize it. Plot an ROC curve and calculate the area under it (AUC).
+
+How did the model perform? Compare its training and testing accuracies. If the values differ, why do you think this is so?
+
+Note that a good preforming model would ideally have higher numbers along the diagonal (up-left to down-right) with small numbers on the off-diagonal. In other words, the model would not be great if it tends to predict "No" as "Yes" more often than it should. In my case, the accuracy for the training data set is higher than the testing data set. This is because for my training dataset, there are more predicts where "No" was considered a "Yes". Therefore, the training dataset's accuracy is slightly better because of this. 
+
+
+```{r}
+
+
+pred_log = predict(log_fit, new_data = titanic_test, type = "class")
+pred_lda = predict(lda_fit, new_data = titanic_test, type = "class")
+pred_qda = predict(qda_fit, new_data = titanic_test, type = "class")
+pred_nb = predict(nb_fit, new_data = titanic_test, type = "class")
+
+
+bind <- bind_cols(log = pred_log$.pred_class, lda = pred_lda$.pred_class, qda = pred_qda$.pred_class, nb = pred_nb$.pred_class, survived = titanic_test$survived)
+
+bind
+
+log_reg_acc <- bind %>%
+  accuracy(truth = factor(survived), estimate = log)
+log_reg_acc
+
+lda_acc <- bind %>%
+  accuracy(truth = factor(survived), estimate = lda)
+
+nb_acc <- bind %>%
+  accuracy(truth = factor(survived), estimate = nb)
+
+qda_acc <- bind %>%
+  accuracy(truth = factor(survived), estimate = qda)
+
+accuracies <- c(log_reg_acc$.estimate, lda_acc$.estimate, 
+                nb_acc$.estimate, qda_acc$.estimate)
+
+log_reg_acc$.estimate
+
+models <- c("Logistic Regression", "LDA", "Naive Bayes", "QDA")
+results <- tibble(accuracies = accuracies, models = models)
+results %>% 
+  arrange(-accuracies)
+
+augment(log_fit, new_data = titanic_test) %>%
+  conf_mat(truth = survived, estimate = .pred_class)
+
+augment(nb_fit, new_data = titanic_test) %>%
+  conf_mat(truth = survived, estimate = .pred_class)
+
+
+augment(lda_fit, new_data = titanic_test) %>%
+  conf_mat(truth = survived, estimate = .pred_class)
+
+
+augment(qda_fit, new_data = titanic_test) %>%
+  conf_mat(truth = survived, estimate = .pred_class)
+
+
+augment(log_fit, new_data = titanic_test) %>%
+  conf_mat(truth = survived, estimate = .pred_class) %>%
+  autoplot(type = "heatmap")
+
+
+augment(log_fit, new_data = titanic_test) %>%
+  roc_curve(factor(survived), .pred_No) %>%
+  autoplot()
+
+library(ggplot2)
+
+augment(log_fit, new_data = titanic_test) %>%
+  roc_auc(factor(survived), .pred_No) 
+
+```
+
+
+
+### Required for 231 Students
+
+In a binary classification problem, let $p$ represent the probability of class label $1$, which implies that $1 - p$ represents the probability of class label $0$. The *logistic function* (also called the "inverse logit") is the cumulative distribution function of the logistic distribution, which maps a real number *z* to the open interval $(0, 1)$.
+
+### Question 11
+
+Given that:
+
+$$
+p(z)=\frac{e^z}{1+e^z}
+$$
+
+Prove that the inverse of a logistic function is indeed the *logit* function:
+
+$$
+z(p)=ln\left(\frac{p}{1-p}\right)
+$$
+
+### Question 12
+
+Assume that $z = \beta_0 + \beta_{1}x_{1}$ and $p = logistic(z)$. How do the odds of the outcome change if you increase $x_{1}$ by two? Demonstrate this.
+
+Assume now that $\beta_1$ is negative. What value does $p$ approach as $x_{1}$ approaches $\infty$? What value does $p$ approach as $x_{1}$ approaches $-\infty$?
